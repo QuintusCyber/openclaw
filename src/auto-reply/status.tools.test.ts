@@ -138,6 +138,45 @@ describe("tools product copy", () => {
     expect(text).not.toContain("unavailable right now");
   });
 
+  it("omits unreadable tool inventory entries instead of failing the whole tools response", () => {
+    const text = buildToolsMessage(
+      {
+        agentId: "main",
+        profile: "coding",
+        groups: [
+          {
+            id: "core",
+            label: "Built-in tools",
+            source: "core",
+            tools: [
+              {
+                id: "exec",
+                label: "Exec",
+                description: "Run shell commands",
+                rawDescription: "Run shell commands",
+                source: "core",
+              },
+              {
+                id: "broken",
+                get label(): string {
+                  throw new Error("descriptor unavailable");
+                },
+                description: "Broken descriptor",
+                rawDescription: "Broken descriptor",
+                source: "core",
+              },
+            ],
+          },
+        ],
+      },
+      { verbose: true },
+    );
+
+    expect(text).toContain("Exec - Run shell commands");
+    expect(text).not.toContain("descriptor unavailable");
+    expect(text).not.toContain("Broken descriptor");
+  });
+
   it("trims verbose output before schema-like doc blocks", () => {
     const text = buildToolsMessage(
       {

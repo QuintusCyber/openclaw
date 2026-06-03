@@ -15,15 +15,85 @@ export {
   type StatusArgs,
 } from "../status/status-message.js";
 
+type ToolsInventoryGroup = EffectiveToolInventoryResult["groups"][number];
+type ToolsInventoryEntry = ToolsInventoryGroup["tools"][number];
+type ToolsInventorySource = ToolsInventoryGroup["source"];
+
 type ToolsMessageItem = {
   id: string;
   name: string;
   description: string;
   rawDescription: string;
-  source: EffectiveToolInventoryResult["groups"][number]["source"];
+  source: ToolsInventorySource;
   pluginId?: string;
   channelId?: string;
 };
+
+type InventoryStringReadResult = { ok: true; value: string } | { ok: false };
+
+function readInventoryString(read: () => unknown): InventoryStringReadResult {
+  try {
+    const value = read();
+    return typeof value === "string" ? { ok: true, value } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function readOptionalInventoryString(read: () => unknown): string | undefined {
+  const result = readInventoryString(read);
+  return result.ok ? result.value : undefined;
+}
+
+function isToolsInventorySource(value: unknown): value is ToolsInventorySource {
+  return value === "core" || value === "plugin" || value === "channel" || value === "mcp";
+}
+
+function readToolsInventorySource(tool: ToolsInventoryEntry): ToolsInventorySource {
+  try {
+    const source = tool.source;
+    return isToolsInventorySource(source) ? source : "core";
+  } catch {
+    return "core";
+  }
+}
+
+function readToolsInventoryEntries(group: ToolsInventoryGroup): ToolsInventoryEntry[] | null {
+  try {
+    return Array.isArray(group.tools) ? group.tools : null;
+  } catch {
+    return null;
+  }
+}
+
+function readToolsMessageItem(tool: ToolsInventoryEntry): ToolsMessageItem | null {
+  const rawId = readInventoryString(() => tool.id);
+  if (!rawId.ok) {
+    return null;
+  }
+  const id = normalizeToolName(rawId.value);
+  if (!id) {
+    return null;
+  }
+
+  const label = readInventoryString(() => tool.label);
+  const description = readInventoryString(() => tool.description);
+  const rawDescription = readInventoryString(() => tool.rawDescription);
+  if (!label.ok || !description.ok || !rawDescription.ok) {
+    return null;
+  }
+
+  const safeDescription = description.value || "Tool";
+  return {
+    id,
+    name: label.value || id,
+    description: safeDescription,
+    rawDescription: rawDescription.value || safeDescription,
+    source: readToolsInventorySource(tool),
+    pluginId: readOptionalInventoryString(() => tool.pluginId),
+    channelId: readOptionalInventoryString(() => tool.channelId),
+  };
+}
 
 function sortToolsMessageItems(items: ToolsMessageItem[]): ToolsMessageItem[] {
   return items.toSorted((a, b) => a.name.localeCompare(b.name));
@@ -52,20 +122,22 @@ export function buildToolsMessage(
 ): string {
   const groups: Array<{ label: string; tools: ToolsMessageItem[] }> = [];
   for (const group of result.groups) {
+    const groupTools = readToolsInventoryEntries(group);
+    if (!groupTools) {
+      continue;
+    }
     const tools: ToolsMessageItem[] = [];
-    for (const tool of group.tools) {
-      tools.push({
-        id: normalizeToolName(tool.id),
-        name: tool.label,
-        description: tool.description || "Tool",
-        rawDescription: tool.rawDescription || tool.description || "Tool",
-        source: tool.source,
-        pluginId: tool.pluginId,
-        channelId: tool.channelId,
-      });
+    for (const tool of groupTools) {
+      const item = readToolsMessageItem(tool);
+      if (item) {
+        tools.push(item);
+      }
     }
     if (tools.length > 0) {
-      groups.push({ label: group.label, tools: sortToolsMessageItems(tools) });
+      groups.push({
+        label: readOptionalInventoryString(() => group.label) || "Tools",
+        tools: sortToolsMessageItems(tools),
+      });
     }
   }
 
